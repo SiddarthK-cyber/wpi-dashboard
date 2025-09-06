@@ -1,1 +1,1 @@
-web: gunicorn app_enhanced:server
+gunicorn app_simple_deploy:server
