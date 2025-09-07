@@ -1,0 +1,5 @@
+COMM_NAME,Overall_Avg_Index,Volatility_Percent,Price_Range,Long_Term_Trend_Percent,Peak_Season_Month,Low_Season_Month,Data_Points,Year_Range
+Paddy,123.91,3.15,13.9,0.84,Aug,Jan,60,2020-2024
+Wheat,128.04,4.43,20.3,9.44,Sep,Feb,60,2020-2024
+Gram,141.0,14.12,64.6,35.98,Dec,May,60,2020-2024
+Jowar,187.08,20.99,127.5,80.46,Dec,Jan,60,2020-2024
