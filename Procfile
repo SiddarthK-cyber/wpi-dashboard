@@ -1,1 +1,0 @@
-gunicorn app_simple_deploy:server
