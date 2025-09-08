@@ -3,10 +3,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
+import numpy as np
+import math
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="India WPI Comprehensive Dashboard",
+    page_title="India WPI Comprehensive Dashboard - 805 Clean Commodities",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -14,734 +16,801 @@ st.set_page_config(
 
 # Load data with caching
 @st.cache_data
-def load_all_data():
-    """Load all WPI datasets"""
+def load_clean_data():
+    """Load cleaned WPI datasets"""
     try:
-        # Load main monthly data
-        monthly_data = pd.read_csv('wpi_monthly_data.csv')
+        # Load cleaned monthly data (805 individual commodities)
+        monthly_data = pd.read_csv('wpi_commodities_cleaned.csv')
         
-        # Load seasonality analysis
-        seasonality_data = pd.read_csv('wpi_seasonality_analysis.csv')
+        # Load cleaned summary
+        summary_data = pd.read_csv('wpi_commodities_summary_cleaned.csv')
         
-        # Load commodity summary
-        summary_data = pd.read_csv('wpi_commodity_summary.csv')
-        
-        # Load existing annual data for comparison
-        annual_df = pd.read_csv('wpi_10_commodities.csv')
-        year_cols = [col for col in annual_df.columns if 'INDEX' in col]
-        annual_long = pd.melt(annual_df, 
-                             id_vars=['COMM_NAME', 'COMM_CODE', 'COMM_WT'],
-                             value_vars=year_cols,
-                             var_name='Year_Code',
-                             value_name='WPI_Index')
-        annual_long['Year'] = annual_long['Year_Code'].str.extract(r'(\d{4})').astype(int)
-        
-        return monthly_data, seasonality_data, summary_data, annual_long
+        return monthly_data, summary_data
         
     except FileNotFoundError as e:
-        st.error(f"Data file not found: {e}")
-        return None, None, None, None
+        st.error(f"Cleaned data files not found: {e}")
+        st.info("Please run 'python clean_commodity_data.py' first to create cleaned data files.")
+        
+        # Fallback to original data if cleaned files don't exist
+        try:
+            monthly_data = pd.read_csv('wpi_all_commodities_monthly.csv')
+            summary_data = pd.read_csv('wpi_all_commodities_summary.csv')
+            return monthly_data, summary_data
+        except:
+            return None, None
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        return None, None, None, None
+        return None, None
 
 # Load all datasets
-monthly_data, seasonality_data, summary_data, annual_data = load_all_data()
+monthly_data, summary_data = load_clean_data()
 
 if monthly_data is None:
     st.stop()
 
 # App Header
 st.title("🇮🇳 India WPI Comprehensive Dashboard")
-st.markdown("### Advanced Analytics with Seasonality Insights")
+st.markdown(f"### **{monthly_data['COMM_NAME'].nunique()} Individual Commodities** | **{len(monthly_data):,} Data Points** | **{monthly_data['Year'].min()}-{monthly_data['Year'].max()}**")
 st.markdown("---")
+
+# Global search at the top
+st.markdown("### 🔍 Quick Search (Global)")
+global_search = st.text_input(
+    "Global Search",
+    placeholder="🔍 Search any commodity across all 805 items... (e.g., 'Rice', 'Steel', 'Cotton')",
+    help="Search works across all pages and features",
+    label_visibility="collapsed"
+)
+
+# Filter commodities based on global search
+available_commodities = sorted(monthly_data['COMM_NAME'].unique())
+if global_search:
+    available_commodities = [comm for comm in available_commodities 
+                           if global_search.lower() in comm.lower()]
 
 # Sidebar Navigation
 st.sidebar.title("📊 Dashboard Controls")
 page = st.sidebar.selectbox(
     "Select Analysis View:",
-    ["📈 Price Trends", "🔄 Seasonality Analysis", "📊 Comparative Analysis", "📋 Summary Statistics", "📊 Individual Commodity Charts"]
+    [
+        "📑 All Commodities Individual Charts",
+        "🔍 Single Commodity Analysis",
+        "📊 Multi-Commodity Comparison", 
+        "🏆 Top Performers & Rankings",
+        "📋 Statistics Overview"
+    ]
 )
 
-# Commodity selection
-available_commodities = sorted(monthly_data['COMM_NAME'].unique())
-selected_commodities = st.sidebar.multiselect(
-    "Select Commodities:",
-    options=available_commodities,
-    default=available_commodities[:3] if len(available_commodities) >= 3 else available_commodities,
-    help="Choose commodities for analysis"
-)
+# Sidebar filters
+st.sidebar.markdown("### 🎛️ Filters")
 
 # Year range
 year_range = st.sidebar.slider(
     "Select Year Range:",
     min_value=int(monthly_data['Year'].min()),
     max_value=int(monthly_data['Year'].max()),
-    value=(int(monthly_data['Year'].min()), int(monthly_data['Year'].max())),
+    value=(2020, int(monthly_data['Year'].max())),
     help="Adjust the time period for analysis"
 )
 
 # Filter data based on selections
-if not selected_commodities:
-    st.warning("Please select at least one commodity from the sidebar.")
-    st.stop()
-
 filtered_monthly = monthly_data[
-    (monthly_data['COMM_NAME'].isin(selected_commodities)) &
+    (monthly_data['COMM_NAME'].isin(available_commodities)) &
     (monthly_data['Year'] >= year_range[0]) &
     (monthly_data['Year'] <= year_range[1])
 ]
 
-# PAGE 1: PRICE TRENDS
-if page == "📈 Price Trends":
-    st.header("📈 Price Trend Analysis")
+# PAGE 1: ALL COMMODITIES INDIVIDUAL CHARTS (Task 4)
+if page == "📑 All Commodities Individual Charts":
+    st.header("📑 All Commodities - Individual Charts Display")
     
-    col1, col2 = st.columns(2)
+    # Show total count
+    st.info(f"📊 Displaying individual charts for **{len(available_commodities)} commodities** {'(filtered)' if global_search else '(all)'}")
     
+    # Chart type selection for all charts
+    col1, col2 = st.columns([1, 1])
     with col1:
-        # Monthly Price Trends
-        st.subheader("Monthly Price Trends")
-        
-        if not filtered_monthly.empty:
-            fig_monthly = px.line(filtered_monthly, 
-                                x='Date', 
-                                y='WPI_Index',
-                                color='COMM_NAME',
-                                markers=True,
-                                height=400,
-                                title="Monthly WPI Index Trends")
-            
-            fig_monthly.update_layout(
-                plot_bgcolor='white',
-                paper_bgcolor='white',
-                xaxis_title="Date",
-                yaxis_title="WPI Index",
-                hovermode='x unified'
-            )
-            
-            st.plotly_chart(fig_monthly, use_container_width=True)
-        
+        chart_type_all = st.selectbox(
+            "📊 Chart Type for All:",
+            [
+                "Line Chart",
+                "Area Chart", 
+                "Bar Chart",
+                "Heatmap Chart",  # Replaced Candlestick (Task 2)
+                "Box Plot",
+                "Scatter Plot"
+            ],
+            help="Select visualization type for all individual charts"
+        )
+    
     with col2:
-        # Year-over-Year Growth
-        st.subheader("Year-over-Year Growth Rates")
-        
-        growth_data = []
-        for commodity in selected_commodities:
-            comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity]
-            
-            for year in comm_data['Year'].unique():
-                if year > comm_data['Year'].min():
-                    current_year_avg = comm_data[comm_data['Year'] == year]['WPI_Index'].mean()
-                    prev_year_avg = comm_data[comm_data['Year'] == year-1]['WPI_Index'].mean()
-                    
-                    if prev_year_avg > 0:
-                        growth_rate = ((current_year_avg / prev_year_avg) - 1) * 100
-                        growth_data.append({
-                            'COMM_NAME': commodity,
-                            'Year': year,
-                            'Growth_Rate': growth_rate
-                        })
-        
-        if growth_data:
-            growth_df = pd.DataFrame(growth_data)
-            fig_growth = px.bar(growth_df,
-                              x='Year',
-                              y='Growth_Rate',
-                              color='COMM_NAME',
-                              title="Annual Growth Rates (%)",
-                              height=400)
-            
-            fig_growth.update_layout(plot_bgcolor='white', paper_bgcolor='white')
-            fig_growth.add_hline(y=0, line_dash="dash", line_color="black")
-            
-            st.plotly_chart(fig_growth, use_container_width=True)
+        charts_per_row = st.selectbox(
+            "Charts per Row:",
+            [1, 2, 3, 4],
+            index=1,
+            help="Number of charts to display per row"
+        )
     
-    # Volatility Analysis
-    st.subheader("📉 Price Volatility Analysis")
+    # Pagination for better performance
+    items_per_page = 20
+    total_pages = math.ceil(len(available_commodities) / items_per_page)
     
-    volatility_data = []
-    for commodity in selected_commodities:
-        comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity]
-        if len(comm_data) > 1:
-            volatility = comm_data['WPI_Index'].std()
-            cv = (volatility / comm_data['WPI_Index'].mean()) * 100
-            volatility_data.append({
-                'Commodity': commodity,
-                'Standard_Deviation': volatility,
-                'Coefficient_of_Variation': cv
-            })
+    if total_pages > 1:
+        page_num = st.selectbox(
+            f"Page ({total_pages} pages total):",
+            range(1, total_pages + 1),
+            help=f"Navigate through {len(available_commodities)} commodities"
+        )
+        start_idx = (page_num - 1) * items_per_page
+        end_idx = min(start_idx + items_per_page, len(available_commodities))
+        page_commodities = available_commodities[start_idx:end_idx]
+    else:
+        page_commodities = available_commodities
+        page_num = 1
     
-    if volatility_data:
-        vol_df = pd.DataFrame(volatility_data)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            fig_vol = px.bar(vol_df,
-                            x='Coefficient_of_Variation',
-                            y='Commodity',
-                            orientation='h',
-                            title="Price Volatility (Coefficient of Variation %)",
-                            color='Coefficient_of_Variation',
-                            color_continuous_scale='Reds')
-            
-            fig_vol.update_layout(plot_bgcolor='white', paper_bgcolor='white')
-            st.plotly_chart(fig_vol, use_container_width=True)
-        
-        with col2:
-            # Display volatility table
-            st.dataframe(vol_df.round(2), use_container_width=True)
-
-# PAGE 2: SEASONALITY ANALYSIS
-elif page == "🔄 Seasonality Analysis":
-    st.header("🔄 Seasonal Pattern Analysis")
+    st.markdown(f"**Showing {len(page_commodities)} commodities** (Page {page_num} of {total_pages})")
     
-    if seasonality_data is not None:
-        # Filter seasonality data
-        filtered_seasonality = seasonality_data[
-            seasonality_data['COMM_NAME'].isin(selected_commodities)
-        ]
+    # Display individual charts for all commodities
+    for i in range(0, len(page_commodities), charts_per_row):
+        cols = st.columns(charts_per_row)
         
-        if not filtered_seasonality.empty:
-            # Seasonal patterns heatmap
-            st.subheader("🌡️ Seasonal Price Patterns")
-            
-            # Create pivot table for heatmap
-            pivot_data = filtered_seasonality.pivot(
-                index='COMM_NAME', 
-                columns='Month_Name', 
-                values='Seasonality_Index'
-            )
-            
-            # Reorder columns by month
-            month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-            pivot_data = pivot_data.reindex(columns=month_order)
-            
-            fig_heatmap = px.imshow(pivot_data,
-                                   labels=dict(x="Month", y="Commodity", color="Seasonality Index"),
-                                   title="Seasonal Price Index (100 = Annual Average)",
-                                   aspect="auto",
-                                   color_continuous_scale="RdYlBu_r")
-            
-            fig_heatmap.update_layout(height=400)
-            st.plotly_chart(fig_heatmap, use_container_width=True)
-            
-            # Seasonal patterns by commodity
-            st.subheader("📊 Monthly Average Patterns")
-            
-            for commodity in selected_commodities:
-                comm_seasonality = filtered_seasonality[
-                    filtered_seasonality['COMM_NAME'] == commodity
-                ]
+        for j in range(charts_per_row):
+            if i + j < len(page_commodities):
+                commodity = page_commodities[i + j]
+                comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity].copy()
                 
-                if not comm_seasonality.empty:
-                    st.markdown(f"**{commodity}**")
+                if not comm_data.empty:
+                    comm_data = comm_data.sort_values(['Year', 'Month'])
                     
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        # Monthly averages
-                        fig_seasonal = px.line(comm_seasonality,
-                                             x='Month_Name',
-                                             y='Avg_Index',
-                                             title=f"{commodity} - Monthly Average Index",
-                                             markers=True)
+                    with cols[j]:
+                        # Create individual chart
+                        if chart_type_all == "Line Chart":
+                            fig = px.line(
+                                comm_data,
+                                x='Date',
+                                y='WPI_Index',
+                                title=f'{commodity}',
+                                height=300
+                            )
+                            
+                        elif chart_type_all == "Area Chart":
+                            fig = px.area(
+                                comm_data,
+                                x='Date',
+                                y='WPI_Index',
+                                title=f'{commodity}',
+                                height=300
+                            )
+                            
+                        elif chart_type_all == "Bar Chart":
+                            # Show yearly averages for bars to avoid clutter
+                            yearly_avg = comm_data.groupby('Year')['WPI_Index'].mean().reset_index()
+                            fig = px.bar(
+                                yearly_avg,
+                                x='Year',
+                                y='WPI_Index',
+                                title=f'{commodity}',
+                                height=300
+                            )
+                            
+                        elif chart_type_all == "Heatmap Chart":  # Replaced Candlestick
+                            # Create month vs year heatmap
+                            pivot_data = comm_data.pivot_table(
+                                index='Month',
+                                columns='Year',
+                                values='WPI_Index',
+                                aggfunc='mean'
+                            )
+                            
+                            if not pivot_data.empty:
+                                fig = px.imshow(
+                                    pivot_data,
+                                    labels=dict(x="Year", y="Month", color="WPI Index"),
+                                    title=f'{commodity}',
+                                    aspect="auto",
+                                    height=300
+                                )
+                            else:
+                                # Fallback to line chart
+                                fig = px.line(comm_data, x='Date', y='WPI_Index', title=f'{commodity}', height=300)
+                            
+                        elif chart_type_all == "Box Plot":
+                            fig = px.box(
+                                comm_data,
+                                x='Year',
+                                y='WPI_Index',
+                                title=f'{commodity}',
+                                height=300
+                            )
+                            
+                        elif chart_type_all == "Scatter Plot":
+                            fig = px.scatter(
+                                comm_data,
+                                x='Date',
+                                y='WPI_Index',
+                                color='Month',
+                                title=f'{commodity}',
+                                height=300
+                            )
                         
-                        fig_seasonal.update_layout(
+                        # Enhanced styling for better text visibility (Task 4 from previous)
+                        fig.update_layout(
                             plot_bgcolor='white',
                             paper_bgcolor='white',
-                            xaxis_title="Month",
-                            yaxis_title="Average WPI Index",
-                            height=300
+                            font=dict(
+                                family="Arial, sans-serif",
+                                size=10,
+                                color="black"
+                            ),
+                            title=dict(
+                                font=dict(size=12, color="black"),
+                                x=0.5
+                            ),
+                            xaxis=dict(
+                                title=dict(font=dict(size=10, color="black")),
+                                tickfont=dict(size=8, color="black"),
+                                gridcolor="lightgray"
+                            ),
+                            yaxis=dict(
+                                title=dict(text="WPI Index", font=dict(size=10, color="black")),
+                                tickfont=dict(size=8, color="black"),
+                                gridcolor="lightgray"
+                            ),
+                            margin=dict(l=40, r=40, t=40, b=40)
                         )
                         
-                        st.plotly_chart(fig_seasonal, use_container_width=True)
-                    
-                    with col2:
-                        # Key insights
-                        peak_month = comm_seasonality.loc[
-                            comm_seasonality['Avg_Index'].idxmax(), 'Month_Name'
-                        ]
-                        low_month = comm_seasonality.loc[
-                            comm_seasonality['Avg_Index'].idxmin(), 'Month_Name'
-                        ]
+                        st.plotly_chart(fig, use_container_width=True, key=f"{commodity}_{i}_{j}")
                         
-                        peak_index = comm_seasonality['Avg_Index'].max()
-                        low_index = comm_seasonality['Avg_Index'].min()
-                        seasonal_range = peak_index - low_index
+                        # Show key metrics below each chart
+                        avg_price = comm_data['WPI_Index'].mean()
+                        volatility = (comm_data['WPI_Index'].std() / avg_price) * 100
+                        growth = ((comm_data['WPI_Index'].iloc[-1] / comm_data['WPI_Index'].iloc[0]) - 1) * 100 if len(comm_data) > 1 else 0
                         
-                        st.metric("Peak Season", peak_month, f"Index: {peak_index:.1f}")
-                        st.metric("Low Season", low_month, f"Index: {low_index:.1f}")
-                        st.metric("Seasonal Range", f"{seasonal_range:.1f}", "Index Points")
-            
-            # Seasonality summary table
-            st.subheader("📋 Seasonality Summary Table")
-            
-            # Show high and low seasons for each commodity
-            season_summary = []
-            for commodity in selected_commodities:
-                comm_data = filtered_seasonality[filtered_seasonality['COMM_NAME'] == commodity]
-                if not comm_data.empty:
-                    peak_row = comm_data.loc[comm_data['Avg_Index'].idxmax()]
-                    low_row = comm_data.loc[comm_data['Avg_Index'].idxmin()]
-                    
-                    season_summary.append({
-                        'Commodity': commodity,
-                        'Peak_Month': peak_row['Month_Name'],
-                        'Peak_Index': round(peak_row['Avg_Index'], 1),
-                        'Low_Month': low_row['Month_Name'],
-                        'Low_Index': round(low_row['Avg_Index'], 1),
-                        'Seasonal_Range': round(peak_row['Avg_Index'] - low_row['Avg_Index'], 1),
-                        'Avg_Volatility': round(comm_data['Coefficient_of_Variation'].mean(), 1)
-                    })
-            
-            if season_summary:
-                season_df = pd.DataFrame(season_summary)
-                st.dataframe(season_df, use_container_width=True)
+                        st.caption(f"📊 Avg: {avg_price:.1f} | 📈 Vol: {volatility:.1f}% | 🚀 Growth: {growth:.1f}%")
 
-# PAGE 3: COMPARATIVE ANALYSIS  
-elif page == "📊 Comparative Analysis":
-    st.header("📊 Comparative Analysis")
+# PAGE 2: SINGLE COMMODITY ANALYSIS
+elif page == "🔍 Single Commodity Analysis":
+    st.header("🔍 Single Commodity Deep Analysis")
     
-    if len(selected_commodities) >= 2:
-        # Price correlation analysis
-        st.subheader("🔗 Price Correlation Analysis")
-        
-        # Create correlation matrix
-        correlation_data = filtered_monthly.pivot(
-            index=['Year', 'Month'], 
-            columns='COMM_NAME', 
-            values='WPI_Index'
+    # Commodity selection with better search
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        selected_commodity = st.selectbox(
+            "Select Commodity for Deep Analysis:",
+            options=available_commodities,
+            help=f"Choose from {len(available_commodities)} available commodities"
         )
+    
+    with col2:
+        # Chart type selection (Task 2 - Removed Candlestick, added Heatmap)
+        chart_type = st.selectbox(
+            "📊 Chart Type:",
+            [
+                "Line Chart",
+                "Area Chart", 
+                "Bar Chart",
+                "Heatmap Chart",  # More relevant than Candlestick
+                "Box Plot",
+                "Scatter Plot"
+            ],
+            help="Select visualization type"
+        )
+    
+    if selected_commodity:
+        comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == selected_commodity].copy()
         
-        correlation_matrix = correlation_data.corr()
-        
-        fig_corr = px.imshow(correlation_matrix,
-                            labels=dict(color="Correlation"),
-                            title="Price Correlation Matrix",
-                            aspect="auto",
-                            color_continuous_scale="RdBu")
-        
-        fig_corr.update_layout(height=400)
-        st.plotly_chart(fig_corr, use_container_width=True)
-        
-        # Normalized price comparison
-        st.subheader("📈 Normalized Price Trends (Base Year = 100)")
-        
-        normalized_data = []
-        for commodity in selected_commodities:
-            comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity].copy()
-            if not comm_data.empty:
-                base_value = comm_data['WPI_Index'].iloc[0]  # First value as base
-                comm_data['Normalized_Index'] = (comm_data['WPI_Index'] / base_value) * 100
-                normalized_data.append(comm_data)
-        
-        if normalized_data:
-            normalized_df = pd.concat(normalized_data)
+        if not comm_data.empty:
+            # Sort by date for proper visualization
+            comm_data = comm_data.sort_values(['Year', 'Month'])
             
-            fig_normalized = px.line(normalized_df,
-                                   x='Date',
-                                   y='Normalized_Index',
-                                   color='COMM_NAME',
-                                   markers=True,
-                                   title="Normalized Price Trends (Starting Point = 100)",
-                                   height=500)
+            # Create individual chart based on selected type
+            st.subheader(f"📈 {selected_commodity} - Deep Analysis")
             
-            fig_normalized.update_layout(
+            # Enhanced chart creation with better text visibility
+            if chart_type == "Line Chart":
+                fig = px.line(
+                    comm_data,
+                    x='Date',
+                    y='WPI_Index',
+                    title=f'{selected_commodity} - Monthly Price Trends',
+                    markers=True,
+                    height=500
+                )
+                
+            elif chart_type == "Area Chart":
+                fig = px.area(
+                    comm_data,
+                    x='Date',
+                    y='WPI_Index',
+                    title=f'{selected_commodity} - Price Trend (Area)',
+                    height=500
+                )
+                
+            elif chart_type == "Bar Chart":
+                fig = px.bar(
+                    comm_data,
+                    x='Date',
+                    y='WPI_Index',
+                    title=f'{selected_commodity} - Monthly Prices (Bars)',
+                    height=500
+                )
+                
+            elif chart_type == "Heatmap Chart":  # Replaced Candlestick (Task 2)
+                # Create month vs year heatmap
+                pivot_data = comm_data.pivot_table(
+                    index='Month',
+                    columns='Year',
+                    values='WPI_Index',
+                    aggfunc='mean'
+                )
+                
+                if not pivot_data.empty:
+                    fig = px.imshow(
+                        pivot_data,
+                        labels=dict(x="Year", y="Month", color="WPI Index"),
+                        title=f'{selected_commodity} - Seasonal Price Heatmap',
+                        aspect="auto",
+                        height=500,
+                        color_continuous_scale="RdYlBu_r"
+                    )
+                    
+                    # Add month labels
+                    month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                    fig.update_yaxis(
+                        tickmode='array',
+                        tickvals=list(range(1, 13)),
+                        ticktext=month_labels
+                    )
+                else:
+                    # Fallback to line chart
+                    fig = px.line(comm_data, x='Date', y='WPI_Index', 
+                                title=f'{selected_commodity} - Price Trends', height=500)
+                
+            elif chart_type == "Box Plot":
+                fig = px.box(
+                    comm_data,
+                    x='Year',
+                    y='WPI_Index',
+                    title=f'{selected_commodity} - Annual Price Distribution',
+                    height=500
+                )
+                
+            elif chart_type == "Scatter Plot":
+                fig = px.scatter(
+                    comm_data,
+                    x='Date',
+                    y='WPI_Index',
+                    color='Month',
+                    size='WPI_Index',
+                    title=f'{selected_commodity} - Price Scatter (Sized by Value)',
+                    height=500
+                )
+            
+            # Enhanced styling for better text visibility
+            if chart_type != "Heatmap Chart":
+                fig.update_layout(
+                    plot_bgcolor='white',
+                    paper_bgcolor='white',
+                    font=dict(
+                        family="Arial, sans-serif",
+                        size=14,
+                        color="black"
+                    ),
+                    title=dict(
+                        font=dict(size=18, color="black"),
+                        x=0.5
+                    ),
+                    xaxis=dict(
+                        title=dict(font=dict(size=14, color="black")),
+                        tickfont=dict(size=12, color="black"),
+                        gridcolor="lightgray"
+                    ),
+                    yaxis=dict(
+                        title=dict(text="WPI Index", font=dict(size=14, color="black")),
+                        tickfont=dict(size=12, color="black"),
+                        gridcolor="lightgray"
+                    )
+                )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Key metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                avg_price = comm_data['WPI_Index'].mean()
+                st.metric("Average Index", f"{avg_price:.1f}")
+            
+            with col2:
+                volatility = (comm_data['WPI_Index'].std() / avg_price) * 100
+                st.metric("Volatility (%)", f"{volatility:.1f}%")
+            
+            with col3:
+                price_change = comm_data['WPI_Index'].iloc[-1] - comm_data['WPI_Index'].iloc[0]
+                st.metric("Total Change", f"{price_change:.1f}", delta=f"{price_change:.1f}")
+            
+            with col4:
+                growth_rate = ((comm_data['WPI_Index'].iloc[-1] / comm_data['WPI_Index'].iloc[0]) - 1) * 100
+                st.metric("Growth Rate (%)", f"{growth_rate:.1f}%", delta=f"{growth_rate:.1f}%")
+                
+        else:
+            st.warning(f"No data available for {selected_commodity} in the selected time range.")
+
+# PAGE 3: MULTI-COMMODITY COMPARISON 
+elif page == "📊 Multi-Commodity Comparison":
+    st.header("📊 Multi-Commodity Comparison")
+    
+    st.subheader("🔍 Select Commodities to Compare")
+    
+    # Multi-select for comparison
+    selected_commodities = st.multiselect(
+        "Select Commodities for Comparison:",
+        options=available_commodities,
+        default=available_commodities[:5] if len(available_commodities) >= 5 else available_commodities[:3],
+        help=f"Choose multiple commodities from {len(available_commodities)} available options"
+    )
+    
+    if len(selected_commodities) > 0:
+        # Filter data for selected commodities
+        comparison_data = filtered_monthly[filtered_monthly['COMM_NAME'].isin(selected_commodities)]
+        
+        if not comparison_data.empty:
+            # Chart type selection for comparison
+            comparison_chart_type = st.selectbox(
+                "📊 Comparison Chart Type:",
+                [
+                    "Line Chart (Multi-line)",
+                    "Normalized Trends (Base=100)",
+                    "Area Chart (Stacked)",
+                    "Box Plot Comparison",
+                    "Correlation Heatmap"
+                ]
+            )
+            
+            # Create very big chart for comparison (Task 2 requirement)
+            if comparison_chart_type == "Line Chart (Multi-line)":
+                fig = px.line(
+                    comparison_data,
+                    x='Date',
+                    y='WPI_Index',
+                    color='COMM_NAME',
+                    title=f'Multi-Commodity Price Comparison ({len(selected_commodities)} Items)',
+                    markers=True,
+                    height=700,  # Very big chart
+                    width=1200
+                )
+                
+            elif comparison_chart_type == "Normalized Trends (Base=100)":
+                # Normalize to base 100
+                normalized_data = []
+                for commodity in selected_commodities:
+                    comm_data = comparison_data[comparison_data['COMM_NAME'] == commodity].copy()
+                    if not comm_data.empty:
+                        comm_data = comm_data.sort_values(['Year', 'Month'])
+                        base_value = comm_data['WPI_Index'].iloc[0]
+                        comm_data['Normalized_Index'] = (comm_data['WPI_Index'] / base_value) * 100
+                        normalized_data.append(comm_data)
+                
+                if normalized_data:
+                    norm_df = pd.concat(normalized_data)
+                    fig = px.line(
+                        norm_df,
+                        x='Date',
+                        y='Normalized_Index',
+                        color='COMM_NAME',
+                        title=f'Normalized Price Trends - Base=100 ({len(selected_commodities)} Items)',
+                        markers=True,
+                        height=700,
+                        width=1200
+                    )
+                    fig.add_hline(y=100, line_dash="dash", line_color="red", 
+                                 annotation_text="Baseline (100)")
+            
+            elif comparison_chart_type == "Area Chart (Stacked)":
+                fig = px.area(
+                    comparison_data,
+                    x='Date',
+                    y='WPI_Index',
+                    color='COMM_NAME',
+                    title=f'Stacked Area Chart - Price Trends ({len(selected_commodities)} Items)',
+                    height=700,
+                    width=1200
+                )
+                
+            elif comparison_chart_type == "Box Plot Comparison":
+                fig = px.box(
+                    comparison_data,
+                    x='COMM_NAME',
+                    y='WPI_Index',
+                    title=f'Price Distribution Comparison ({len(selected_commodities)} Items)',
+                    height=700,
+                    width=1200
+                )
+                fig.update_xaxes(tickangle=45)
+                
+            elif comparison_chart_type == "Correlation Heatmap":
+                # Create correlation matrix
+                pivot_data = comparison_data.pivot_table(
+                    index=['Year', 'Month'],
+                    columns='COMM_NAME',
+                    values='WPI_Index',
+                    aggfunc='mean'
+                )
+                correlation_matrix = pivot_data.corr()
+                
+                fig = px.imshow(
+                    correlation_matrix,
+                    labels=dict(color="Correlation"),
+                    title=f'Price Correlation Matrix ({len(selected_commodities)} Items)',
+                    color_continuous_scale="RdBu",
+                    height=700,
+                    width=700
+                )
+            
+            # Enhanced styling for very big charts
+            fig.update_layout(
                 plot_bgcolor='white',
                 paper_bgcolor='white',
-                xaxis_title="Date",
-                yaxis_title="Normalized Index",
-                hovermode='x unified'
+                font=dict(
+                    family="Arial, sans-serif",
+                    size=16,  # Larger font for big charts
+                    color="black"
+                ),
+                title=dict(
+                    font=dict(size=20, color="black"),
+                    x=0.5
+                ),
+                xaxis=dict(
+                    title=dict(font=dict(size=16, color="black")),
+                    tickfont=dict(size=14, color="black"),
+                    gridcolor="lightgray"
+                ),
+                yaxis=dict(
+                    title=dict(font=dict(size=16, color="black")),
+                    tickfont=dict(size=14, color="black"),
+                    gridcolor="lightgray"
+                ),
+                legend=dict(
+                    font=dict(size=12),
+                    bgcolor="rgba(255,255,255,0.8)"
+                )
             )
             
-            st.plotly_chart(fig_normalized, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Comparison statistics
+            st.subheader("📊 Comparison Statistics")
+            
+            comparison_stats = []
+            for commodity in selected_commodities:
+                comm_data = comparison_data[comparison_data['COMM_NAME'] == commodity]
+                if not comm_data.empty:
+                    comparison_stats.append({
+                        'Commodity': commodity,
+                        'Average Index': round(comm_data['WPI_Index'].mean(), 2),
+                        'Volatility (%)': round((comm_data['WPI_Index'].std() / comm_data['WPI_Index'].mean()) * 100, 2),
+                        'Min Value': round(comm_data['WPI_Index'].min(), 2),
+                        'Max Value': round(comm_data['WPI_Index'].max(), 2),
+                        'Latest Value': round(comm_data['WPI_Index'].iloc[-1], 2)
+                    })
+            
+            if comparison_stats:
+                stats_df = pd.DataFrame(comparison_stats)
+                st.dataframe(stats_df, use_container_width=True, height=300)
+        
+        else:
+            st.warning("No data available for the selected commodities in the chosen time range.")
+    
     else:
-        st.warning("Please select at least 2 commodities for comparative analysis.")
+        st.info("Please select at least one commodity for comparison.")
 
-# PAGE 4: SUMMARY STATISTICS
-elif page == "📋 Summary Statistics":
-    st.header("📋 Comprehensive Summary Statistics")
+# PAGE 4: TOP PERFORMERS & RANKINGS
+elif page == "🏆 Top Performers & Rankings":
+    st.header("🏆 Top Performers & Rankings")
     
     if summary_data is not None:
-        # Filter summary data
-        filtered_summary = summary_data[
-            summary_data['COMM_NAME'].isin(selected_commodities)
-        ]
+        # Filter summary data based on current selections
+        filtered_summary = summary_data[summary_data['COMM_NAME'].isin(available_commodities)]
         
-        # Key metrics cards
-        st.subheader("🎯 Key Performance Indicators")
+        # Top performers tabs
+        tab1, tab2, tab3, tab4 = st.tabs(["🚀 Highest Growth", "📈 Most Volatile", "💪 Best Performers", "📊 Complete Rankings"])
         
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            avg_volatility = filtered_summary['Volatility_Percent'].mean()
-            st.metric("Average Volatility", f"{avg_volatility:.1f}%")
-        
-        with col2:
-            avg_growth = filtered_summary['Long_Term_Trend_Percent'].mean()
-            st.metric("Average Growth", f"{avg_growth:.1f}%")
-        
-        with col3:
-            total_commodities = len(filtered_summary)
-            st.metric("Commodities Analyzed", total_commodities)
-        
-        with col4:
-            data_points = filtered_summary['Data_Points'].sum()
-            st.metric("Total Data Points", data_points)
-        
-        # Detailed summary table
-        st.subheader("📊 Detailed Statistics Table")
-        
-        # Display formatted summary table
-        display_summary = filtered_summary.copy()
-        display_summary = display_summary.round(2)
-        
-        st.dataframe(display_summary, use_container_width=True)
-        
-        # Top performers
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🏆 Top Performers")
+        with tab1:
+            st.subheader("🚀 Top 20 Highest Growth Commodities")
+            top_growth = filtered_summary.nlargest(20, 'Growth_Percent')[
+                ['COMM_NAME', 'Growth_Percent', 'Avg_Index', 'Volatility_Percent']
+            ].reset_index(drop=True)
+            top_growth.index += 1
             
-            # Highest growth
-            st.write("**Highest Growth:**")
-            top_growth = filtered_summary.nlargest(3, 'Long_Term_Trend_Percent')[
-                ['COMM_NAME', 'Long_Term_Trend_Percent']
-            ]
+            # Visualization
+            fig = px.bar(
+                top_growth,
+                x='COMM_NAME',
+                y='Growth_Percent',
+                color='Growth_Percent',
+                title='Top 20 Commodities by Growth Rate',
+                color_continuous_scale='Greens',
+                height=500
+            )
+            fig.update_layout(xaxis_tickangle=45)
+            st.plotly_chart(fig, use_container_width=True)
+            
             st.dataframe(top_growth, use_container_width=True)
         
-        with col2:
-            st.subheader("⚠️ Risk Indicators")
+        with tab2:
+            st.subheader("📈 Top 20 Most Volatile Commodities")
+            most_volatile = filtered_summary.nlargest(20, 'Volatility_Percent')[
+                ['COMM_NAME', 'Volatility_Percent', 'Avg_Index', 'Growth_Percent']
+            ].reset_index(drop=True)
+            most_volatile.index += 1
             
-            # Most volatile
-            st.write("**Most Volatile:**")
-            most_volatile = filtered_summary.nlargest(3, 'Volatility_Percent')[
-                ['COMM_NAME', 'Volatility_Percent']
-            ]
-            st.dataframe(most_volatile, use_container_width=True)
-
-# PAGE 5: INDIVIDUAL COMMODITY CHARTS
-elif page == "📊 Individual Commodity Charts":
-    st.header("📊 Individual Commodity Comprehensive Charts")
-    
-    # Function to create individual comprehensive charts
-    def create_individual_chart(commodity):
-        """Create comprehensive chart for individual commodity"""
-        import numpy as np
-        
-        comm_monthly = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity]
-        comm_seasonality = seasonality_data[seasonality_data['COMM_NAME'] == commodity] if seasonality_data is not None else pd.DataFrame()
-        
-        if comm_monthly.empty:
-            st.warning(f"No data available for {commodity}")
-            return
-        
-        # Create subplot with 4 charts
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=(
-                f'{commodity} - Monthly Price Trends',
-                f'{commodity} - Seasonal Pattern',
-                f'{commodity} - Price Distribution',
-                f'{commodity} - Monthly Volatility'
-            ),
-            specs=[[{"secondary_y": False}, {"type": "polar"}],
-                   [{"type": "histogram"}, {"type": "scatter"}]]
-        )
-        
-        # Chart 1: Monthly Price Trends with moving average
-        fig.add_trace(
-            go.Scatter(
-                x=comm_monthly['Date'],
-                y=comm_monthly['WPI_Index'],
-                mode='lines+markers',
-                name='WPI Index',
-                line=dict(color='blue', width=2),
-                marker=dict(size=4)
-            ),
-            row=1, col=1
-        )
-        
-        # Add moving average if enough data
-        if len(comm_monthly) >= 6:
-            comm_monthly_sorted = comm_monthly.sort_values('Date')
-            ma_values = comm_monthly_sorted['WPI_Index'].rolling(window=6, center=True).mean()
-            
-            fig.add_trace(
-                go.Scatter(
-                    x=comm_monthly_sorted['Date'],
-                    y=ma_values,
-                    mode='lines',
-                    name='6-Month Moving Average',
-                    line=dict(color='red', dash='dash', width=2)
-                ),
-                row=1, col=1
-            )
-        
-        # Chart 2: Seasonal Pattern (Polar chart)
-        if not comm_seasonality.empty:
-            fig.add_trace(
-                go.Scatterpolar(
-                    r=comm_seasonality['Avg_Index'],
-                    theta=comm_seasonality['Month_Name'],
-                    fill='toself',
-                    name='Seasonal Pattern',
-                    line_color='green',
-                    fillcolor='rgba(0,255,0,0.2)'
-                ),
-                row=1, col=2
-            )
-        
-        # Chart 3: Price Distribution
-        fig.add_trace(
-            go.Histogram(
-                x=comm_monthly['WPI_Index'],
-                name='Price Distribution',
-                nbinsx=8,
-                marker_color='orange',
-                opacity=0.7
-            ),
-            row=2, col=1
-        )
-        
-        # Chart 4: Monthly Volatility (by month across years)
-        monthly_vol = []
-        for month in range(1, 13):
-            month_data = comm_monthly[comm_monthly['Month'] == month]['WPI_Index']
-            if len(month_data) > 1:
-                volatility = month_data.std()
-                month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                monthly_vol.append({
-                    'Month': month_names[month-1],
-                    'Volatility': volatility
-                })
-        
-        if monthly_vol:
-            vol_df = pd.DataFrame(monthly_vol)
-            fig.add_trace(
-                go.Bar(
-                    x=vol_df['Month'],
-                    y=vol_df['Volatility'],
-                    name='Monthly Volatility',
-                    marker_color='purple'
-                ),
-                row=2, col=2
-            )
-        
-        # Update layout
-        fig.update_layout(
-            title=f"Comprehensive Analysis: {commodity}",
-            showlegend=False,
-            height=800,
-            width=1200
-        )
-        
-        # Update axes
-        fig.update_xaxes(title_text="Date", row=1, col=1)
-        fig.update_yaxes(title_text="WPI Index", row=1, col=1)
-        fig.update_xaxes(title_text="WPI Index Value", row=2, col=1)
-        fig.update_yaxes(title_text="Frequency", row=2, col=1)
-        fig.update_xaxes(title_text="Month", row=2, col=2)
-        fig.update_yaxes(title_text="Volatility", row=2, col=2)
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Add key insights
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            avg_price = comm_monthly['WPI_Index'].mean()
-            st.metric("Average Price Index", f"{avg_price:.1f}")
-        
-        with col2:
-            price_range = comm_monthly['WPI_Index'].max() - comm_monthly['WPI_Index'].min()
-            st.metric("Price Range", f"{price_range:.1f}")
-        
-        with col3:
-            volatility = (comm_monthly['WPI_Index'].std() / comm_monthly['WPI_Index'].mean()) * 100
-            st.metric("Volatility (%)", f"{volatility:.1f}%")
-    
-    # Commodity selection for individual charts
-    st.subheader("Select Commodity for Detailed Analysis")
-    
-    chart_commodity = st.selectbox(
-        "Choose commodity:",
-        options=available_commodities,
-        help="Select a commodity to view comprehensive analysis"
-    )
-    
-    if chart_commodity:
-        create_individual_chart(chart_commodity)
-        
-        # Add seasonal insights if available
-        if seasonality_data is not None:
-            comm_seasonality = seasonality_data[seasonality_data['COMM_NAME'] == chart_commodity]
-            
-            if not comm_seasonality.empty:
-                st.subheader("🌟 Seasonal Insights")
-                
-                peak_month = comm_seasonality.loc[comm_seasonality['Avg_Index'].idxmax()]
-                low_month = comm_seasonality.loc[comm_seasonality['Avg_Index'].idxmin()]
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.info(f"""
-                    **Peak Season:** {peak_month['Month_Name']}
-                    - Average Index: {peak_month['Avg_Index']:.1f}
-                    - Pattern: {peak_month['Season_Pattern']}
-                    """)
-                
-                with col2:
-                    st.info(f"""
-                    **Low Season:** {low_month['Month_Name']}
-                    - Average Index: {low_month['Avg_Index']:.1f}
-                    - Pattern: {low_month['Season_Pattern']}
-                    """)
-    
-    # Comparison charts section
-    st.markdown("---")
-    st.subheader("📊 Pre-built Comparison Charts")
-    
-    comparison_chart = st.selectbox(
-        "Select comparison chart:",
-        [
-            "Multi-Commodity Price Comparison",
-            "Seasonal Heatmap (All Commodities)",
-            "Volatility Comparison",
-            "Correlation Matrix",
-            "Normalized Trends"
-        ]
-    )
-    
-    if comparison_chart == "Multi-Commodity Price Comparison":
-        fig = px.line(
-            filtered_monthly,
-            x='Date',
-            y='WPI_Index',
-            color='COMM_NAME',
-            title='Multi-Commodity Price Comparison',
-            markers=True,
-            height=600
-        )
-        fig.update_layout(plot_bgcolor='white', paper_bgcolor='white')
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif comparison_chart == "Seasonal Heatmap (All Commodities)" and seasonality_data is not None:
-        pivot_seasonal = seasonality_data[seasonality_data['COMM_NAME'].isin(selected_commodities)].pivot(
-            index='COMM_NAME',
-            columns='Month_Name',
-            values='Avg_Index'
-        )
-        
-        month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        pivot_seasonal = pivot_seasonal.reindex(columns=month_order)
-        
-        fig = px.imshow(
-            pivot_seasonal,
-            labels=dict(x="Month", y="Commodity", color="Average WPI Index"),
-            title="Seasonal Price Patterns - Selected Commodities",
-            color_continuous_scale="RdYlBu_r",
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif comparison_chart == "Volatility Comparison":
-        volatility_data = []
-        for commodity in selected_commodities:
-            comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity]
-            if len(comm_data) > 1:
-                vol = (comm_data['WPI_Index'].std() / comm_data['WPI_Index'].mean()) * 100
-                volatility_data.append({'Commodity': commodity, 'Volatility': vol})
-        
-        if volatility_data:
-            vol_df = pd.DataFrame(volatility_data)
+            # Visualization
             fig = px.bar(
-                vol_df,
-                x='Commodity',
-                y='Volatility',
-                title='Price Volatility Comparison (%)',
-                color='Volatility',
+                most_volatile,
+                x='COMM_NAME',
+                y='Volatility_Percent',
+                color='Volatility_Percent',
+                title='Top 20 Most Volatile Commodities',
                 color_continuous_scale='Reds',
                 height=500
             )
-            fig.update_layout(plot_bgcolor='white', paper_bgcolor='white')
+            fig.update_layout(xaxis_tickangle=45)
             st.plotly_chart(fig, use_container_width=True)
-    
-    elif comparison_chart == "Correlation Matrix":
-        pivot_data = filtered_monthly.pivot(
-            index=['Year', 'Month'],
-            columns='COMM_NAME',
-            values='WPI_Index'
-        )
+            
+            st.dataframe(most_volatile, use_container_width=True)
         
-        if len(pivot_data.columns) > 1:
-            correlation_matrix = pivot_data.corr()
-            fig = px.imshow(
-                correlation_matrix,
-                labels=dict(color="Correlation"),
-                title="Price Correlation Matrix",
-                color_continuous_scale="RdBu",
+        with tab3:
+            st.subheader("💪 Best Overall Performers (High Growth + Low Volatility)")
+            # Calculate performance score (high growth, low volatility)
+            filtered_summary['Performance_Score'] = (
+                filtered_summary['Growth_Percent'] - (filtered_summary['Volatility_Percent'] * 0.5)
+            )
+            
+            best_performers = filtered_summary.nlargest(20, 'Performance_Score')[
+                ['COMM_NAME', 'Performance_Score', 'Growth_Percent', 'Volatility_Percent', 'Avg_Index']
+            ].reset_index(drop=True)
+            best_performers.index += 1
+            
+            # Scatter plot
+            fig = px.scatter(
+                filtered_summary,
+                x='Volatility_Percent',
+                y='Growth_Percent',
+                size='Avg_Index',
+                color='Performance_Score',
+                hover_name='COMM_NAME',
+                title='Growth vs Volatility Analysis',
+                color_continuous_scale='Viridis',
                 height=500
             )
+            fig.add_hline(y=0, line_dash="dash", line_color="gray")
+            fig.add_vline(x=filtered_summary['Volatility_Percent'].mean(), line_dash="dash", line_color="gray")
+            
             st.plotly_chart(fig, use_container_width=True)
-    
-    elif comparison_chart == "Normalized Trends":
-        normalized_data = []
-        for commodity in selected_commodities:
-            comm_data = filtered_monthly[filtered_monthly['COMM_NAME'] == commodity].copy()
-            if not comm_data.empty:
-                base_value = comm_data['WPI_Index'].iloc[0]
-                comm_data['Normalized_Index'] = (comm_data['WPI_Index'] / base_value) * 100
-                normalized_data.append(comm_data)
+            st.dataframe(best_performers, use_container_width=True)
         
-        if normalized_data:
-            normalized_df = pd.concat(normalized_data)
-            fig = px.line(
-                normalized_df,
-                x='Date',
-                y='Normalized_Index',
-                color='COMM_NAME',
-                title='Normalized Price Trends (Starting Point = 100)',
-                markers=True,
-                height=600
+        with tab4:
+            st.subheader("📊 Complete Rankings")
+            
+            ranking_metric = st.selectbox(
+                "Select Ranking Metric:",
+                ["Growth_Percent", "Volatility_Percent", "Avg_Index", "Price_Range"]
             )
-            fig.update_layout(plot_bgcolor='white', paper_bgcolor='white')
-            st.plotly_chart(fig, use_container_width=True)
+            
+            ranking_order = st.radio(
+                "Ranking Order:",
+                ["Highest to Lowest", "Lowest to Highest"]
+            )
+            
+            ascending = ranking_order == "Lowest to Highest"
+            complete_rankings = filtered_summary.sort_values(ranking_metric, ascending=ascending).reset_index(drop=True)
+            complete_rankings.index += 1
+            
+            # Show all available commodities
+            st.dataframe(complete_rankings, use_container_width=True, height=600)
+
+# PAGE 5: STATISTICS OVERVIEW
+elif page == "📋 Statistics Overview":
+    st.header("📋 Comprehensive Statistics Overview")
+    
+    # Overall statistics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Individual Commodities", f"{len(available_commodities):,}")
+    
+    with col2:
+        st.metric("Total Data Points", f"{len(filtered_monthly):,}")
+    
+    with col3:
+        if summary_data is not None:
+            avg_growth = summary_data[summary_data['COMM_NAME'].isin(available_commodities)]['Growth_Percent'].mean()
+            st.metric("Average Growth", f"{avg_growth:.1f}%")
+    
+    with col4:
+        if summary_data is not None:
+            avg_volatility = summary_data[summary_data['COMM_NAME'].isin(available_commodities)]['Volatility_Percent'].mean()
+            st.metric("Average Volatility", f"{avg_volatility:.1f}%")
+    
+    # Distribution analysis
+    st.subheader("📊 Distribution Analysis")
+    
+    if summary_data is not None:
+        filtered_summary = summary_data[summary_data['COMM_NAME'].isin(available_commodities)]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig_hist = px.histogram(
+                filtered_summary,
+                x='Growth_Percent',
+                nbins=30,
+                title='Growth Rate Distribution',
+                height=400
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+        
+        with col2:
+            fig_hist2 = px.histogram(
+                filtered_summary,
+                x='Volatility_Percent',
+                nbins=30,
+                title='Volatility Distribution',
+                height=400
+            )
+            st.plotly_chart(fig_hist2, use_container_width=True)
+        
+        # Detailed statistics table
+        st.subheader("📋 Detailed Statistics Table")
+        
+        display_summary = filtered_summary.copy()
+        
+        st.dataframe(
+            display_summary.round(2),
+            use_container_width=True,
+            height=600,
+            column_config={
+                "COMM_NAME": st.column_config.TextColumn("Commodity", width="medium"),
+                "Growth_Percent": st.column_config.NumberColumn("Growth (%)", format="%.1f"),
+                "Volatility_Percent": st.column_config.NumberColumn("Volatility (%)", format="%.1f"),
+                "Avg_Index": st.column_config.NumberColumn("Average Index", format="%.1f"),
+            }
+        )
 
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: #666666;'>
-    <p>📊 <strong>India WPI Comprehensive Dashboard</strong></p>
+<div style='text-align: center; color: #666666; font-size: 16px;'>
+    <p>📊 <strong>India WPI Comprehensive Dashboard - 805 Individual Commodities</strong></p>
     <p>Data Source: Ministry of Commerce & Industry, Government of India</p>
-    <p>Features: Price Trends | Seasonality Analysis | Comparative Analytics | Statistical Summary</p>
+    <p>Features: All Individual Charts | Deep Analysis | Multi-Commodity Comparison | Performance Rankings | Statistics</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar information
+# Enhanced sidebar information
 st.sidebar.markdown("---")
 st.sidebar.info(f"""
-**Dashboard Features:**
-- 📈 Real-time price trend analysis
-- 🔄 Comprehensive seasonality patterns
-- 📊 Multi-commodity comparisons
-- 📋 Advanced statistical insights
+**📊 Dashboard Statistics:**
+- **Individual Commodities**: {monthly_data['COMM_NAME'].nunique():,}
+- **Currently Filtered**: {len(available_commodities):,}
+- **Data Points**: {len(monthly_data):,}
+- **Time Range**: {monthly_data['Year'].min()}-{monthly_data['Year'].max()}
 
-**Data Coverage:**
-- Time Period: {monthly_data['Year'].min()}-{monthly_data['Year'].max()}
-- Commodities: {len(available_commodities)}
-- Monthly Records: {len(monthly_data)}
-- Update Frequency: Monthly
+**🎯 Key Features:**
+✅ All 805 commodities individual charts
+✅ Clean names (removed a., a1., etc.)
+✅ Alphabetical ordering  
+✅ Global search functionality
+✅ Heatmap charts (replaced candlestick)
+✅ Automatic display of all items
+✅ Enhanced text visibility
 
-**How to Use:**
-1. Select commodities of interest
-2. Adjust the year range
-3. Choose analysis view from dropdown
-4. Explore interactive visualizations
+**📈 Available Charts:**
+- Line, Area, Bar Charts
+- Heatmap (seasonal patterns)
+- Box Plot, Scatter Plot
+- Correlation Analysis
+- Normalized Trends
 """)
